@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+requests
+beautifulsoup4
+firecrawl-py
+google-generativeai
+tldextract
+python-whois
+python-dotenv

@@ -1,0 +1,70 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# Environment variables — NEVER commit real keys
+.env
+.venv
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Project runtime data (auto-generated, not source)
+data/
+*.csv
+
+# Heavy artifacts — excluded from repo
+*.7z
+*.zip
+*.tar
+*.tar.gz
+*.rar
+*.mkv
+*.mp4
+*.avi
+*.mov
+*.wmv
+
+# Documents / personal notes
+*.docx
+*.pdf
+*.pptx
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.antigravitycli
