@@ -1,153 +1,91 @@
+<div align="center">
+
 # Realtime Dual-Fetch Hybrid LLM Trust Scorer
+
+### Live URL → structured 100-point trust report, in seconds
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://python.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Production_API-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![Gemini](https://img.shields.io/badge/Google_Gemini-LLM_Extraction-4285F4?logo=google&logoColor=white)](https://aistudio.google.com)
 [![Ollama](https://img.shields.io/badge/Ollama-Local_LLM-black?logo=ollama&logoColor=white)](https://ollama.com)
 [![Firecrawl](https://img.shields.io/badge/Firecrawl-Web_Scraping-FF4500)](https://firecrawl.dev)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> **An end-to-end AI inference microservice that evaluates the trustworthiness of Arabic e-commerce stores in real time.** A URL enters the pipeline — within seconds, a structured 100-point trust score exits. No pre-computation. No cached results. Every analysis is live.
+**A real-time AI microservice that evaluates the trustworthiness of Arabic e-commerce stores. No pre-built database, no cached verdicts — every analysis fetches, scrapes, extracts, and reasons about the store live.**
 
----
-
-## 🧠 What Makes This Different
-
-Most trust/safety tools rely on pre-built static databases or simple heuristics. This pipeline does the opposite: it **fetches, scrapes, extracts, and reasons about a store on-demand**, combining two AI extraction strategies that compensate for each other's weaknesses:
-
-| Strategy | Tool | Extracts |
-|---|---|---|
-| **Structural Regex** | `re`, `tldextract`, `python-whois` | Phone numbers, VAT IDs, Commercial Registration numbers, domain age |
-| **Semantic LLM** | Google Gemini `flash-lite` | Privacy policy existence & Arabic summary, refund policy existence & Arabic summary |
-
-The two branches feed a **5-axis weighted scoring engine** that produces a final score, tier classification, and actionable warnings — all returned as structured JSON from a single API call.
+</div>
 
 ---
 
-## ⚙️ System Architecture
+## The Core Idea: Two Extraction Engines That Cover Each Other's Blind Spots
 
-```
-POST /api/analyze  ──▶  run_trust_pipeline(url)
-                              │
-           ┌──────────────────┼──────────────────┐
-           │                  │                  │
-      WHOIS Lookup      discover_links()    (parallel fetch)
-      (domain age)      (policy pages)            │
-           │                  │          ┌────────┴────────┐
-           │             candidates      │                 │
-           │                  │    requests.get()   FirecrawlApp()
-           │                  │    (hidden JSON     (clean Markdown)
-           │                  └──────────┤
-           │                       page_contents{}
-           │                  ┌────────┴────────┐
-           │            regex_extract()   gemini_extract()
-           │            (structural)      (semantic LLM)
-           │                  └────────┬────────┘
-           └──────────────▶  calculate_trust_score()
-                                       │
-                              JSON Response ◀── POST /api/chat
-                                                 (Ollama chatbot)
+| Strategy | Tools | Extracts | Blind Spot Covered |
+|---|---|---|---|
+| **Structural regex** | `re`, `tldextract`, `python-whois` | Saudi phone numbers, VAT IDs, Commercial Registration numbers, domain age | LLMs hallucinate/miss exact ID formats |
+| **Semantic LLM** | Google Gemini `flash-lite` | Privacy & refund policy existence + Arabic summaries | Regex cannot judge meaning |
+
+Both engines feed a **5-axis weighted scoring engine** that returns a 0–100 score, a tier, per-axis breakdown, and actionable warnings — from a single API call.
+
+---
+
+## Pipeline Architecture
+
+```mermaid
+flowchart TD
+    REQ["POST /api/analyze { url }"] --> PIPE["run_trust_pipeline(url)"]
+
+    PIPE --> W["WHOIS lookup<br/>domain age via python-whois + tldextract"]
+    PIPE --> LD["Intelligent link discovery<br/>15 pre-seeded Arabic/English policy paths<br/>+ homepage JSON-state parsing<br/>relevance-ranked, capped at 5 pages"]
+
+    LD --> F1["Fetch 1: raw requests.get<br/>captures hidden script-tag JSON<br/>(React/Next.js hydration state)"]
+    LD --> F2["Fetch 2: Firecrawl<br/>clean LLM-ready Markdown"]
+
+    F1 --> RX["Regex extraction engine<br/>Saudi VAT (15-digit) · CR prefixes<br/>+966 phone formats · emails"]
+    F2 --> GX["Gemini flash-lite extraction<br/>structured JSON: privacy/refund<br/>policy existence + Arabic summary"]
+
+    W --> SC["5-axis weighted scoring engine"]
+    RX --> SC
+    GX --> SC
+
+    SC --> OUT["JSON response:<br/>total_score · tier · breakdown · warnings"]
+
+    CHAT["POST /api/chat"] --> BOT["Arabic consumer-safety chatbot<br/>Ollama gemma3:4b · per-session<br/>sliding-window memory"]
 ```
 
 ---
 
-## 🔬 Core ML/AI Components
+## Scoring Engine
 
-### 1. Dual-Fetch Scraping Pipeline
-For each candidate page, two independent fetches run:
-- **Fetch 1 — Raw requests**: Captures hidden `<script>` tag JSON states (React/Next.js hydration data) that Markdown renderers miss
-- **Fetch 2 — Firecrawl**: Returns clean, LLM-ready Markdown, stripping nav, ads, and boilerplate
-
-Each fetch feeds a different downstream consumer (Regex ← raw text, Gemini ← clean Markdown), maximizing recall for both strategies.
-
-### 2. Intelligent Link Discovery
-Rather than blindly crawling, the pipeline runs a **relevance-ranked candidate URL discovery**:
-- Pre-seeds 15 known Arabic/English policy paths (e.g., `/privacy-policy`, `/سياسة-الخصوصية`)
-- Parses homepage JSON state for internal links containing policy keywords (Arabic + English)
-- Deduplicates and sorts by relevance score, capping at 5 pages
-
-### 3. Regex Extraction Engine (Saudi-Context NLP)
-Custom regex patterns built for the Saudi regulatory framework:
-```python
-PHONE_PATTERN  = r'(?:\+966|00966)[ \-]?(?:5[0-9]{8}|9200[0-9]{5})|05[0-9]{8}'
-VAT_PATTERN    = r'\b3[0-9]{14}\b'           # Saudi VAT: 15-digit, starts with 3
-CR_PATTERN     = r'\b(?:10|11|20|40|50)[0-9]{8}\b'  # Commercial Registration prefixes
-EMAIL_PATTERN  = r'[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}'
-```
-
-### 4. Gemini LLM Semantic Extraction
-Sends up to 30,000 characters of clean Markdown per page to `gemini-flash-lite` with a structured JSON prompt. Returns:
-```json
-{
-  "privacy_policy": { "exists": true, "summary": "ملخص السياسة بالعربي" },
-  "refund_policy":  { "exists": false, "summary": "" }
-}
-```
-
-### 5. Multi-Axis Weighted Scoring Engine
-Five independent scoring axes combine into a final 0–100 score:
+Five independent axes combine into the final 0–100 score. All **192 scenario combinations** are documented in [`Final_AI_Server/ANALYZER_SCENARIOS_AR.md`](Final_AI_Server/ANALYZER_SCENARIOS_AR.md):
 
 | Axis | Max Points | Signal |
 |---|---|---|
-| `legal_identity` | 40 | Commercial Registration (CR) + VAT number presence |
-| `domain_longevity` | 25 | WHOIS domain age (≥3yr=25, ≥1yr=15, ≥6mo=10) |
-| `contactability` | 15 | Phone + Email availability |
-| `transparency` | 20 | Privacy & Refund policy detection (10pts each) |
-| `penalties` | −40 | "Ghost Syndrome": new domain + no CR + no phone |
+| `legal_identity` | 40 | Commercial Registration + VAT number presence |
+| `domain_longevity` | 25 | WHOIS age (≥3yr = 25, ≥1yr = 15, ≥6mo = 10) |
+| `contactability` | 15 | Phone + email availability |
+| `transparency` | 20 | Privacy & refund policies (10 each) |
+| `penalties` | −40 | **"Ghost Syndrome"**: new domain + no CR + no phone |
 
-**Score → Tier mapping:**
 ```
-≥ 85  →  🟢  Trusted & Secure
-≥ 60  →  🟡  Proceed with Caution
- < 60  →  🔴  High Risk / Suspicious
+≥ 85 → 🟢 Trusted & Secure
+≥ 60 → 🟡 Proceed with Caution
+< 60 → 🔴 High Risk / Suspicious
 ```
 
-Full scoring logic and all 192 scenario combinations documented in [`ANALYZER_SCENARIOS_AR.md`](Final_AI_Server/ANALYZER_SCENARIOS_AR.md).
+### Saudi-Regulatory Regex Patterns
 
-### 6. Session-Aware Arabic Chatbot (Ollama + Sliding-Window Memory)
-The `/api/chat` endpoint powers an Arabic consumer-safety advisor running locally via Ollama (`gemma3:4b`). Each session maintains independent conversation history with a **sliding-window memory manager** — preventing context overflow while preserving relevant chat history.
+```python
+PHONE_PATTERN  = r'(?:\+966|00966)[ \-]?(?:5[0-9]{8}|9200[0-9]{5})|05[0-9]{8}'
+VAT_PATTERN    = r'\b3[0-9]{14}\b'                    # Saudi VAT: 15 digits, starts with 3
+CR_PATTERN     = r'\b(?:10|11|20|40|50)[0-9]{8}\b'    # Commercial Registration prefixes
+EMAIL_PATTERN  = r'[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}'
+```
 
 ---
 
-## 🚀 Quick Start
+## API Reference
 
-### Prerequisites
-
-| Requirement | Notes |
-|---|---|
-| Python 3.10+ | `python --version` |
-| Ollama | [Download here](https://ollama.com) — must be running locally |
-| Gemini API key | [Get one free at Google AI Studio](https://aistudio.google.com/app/apikey) |
-| Firecrawl API key | [Get one at firecrawl.dev](https://www.firecrawl.dev/app/api-keys) |
-
-### Installation
-
-```bash
-# 1. Clone the repository
-git clone https://github.com/YOUR_USERNAME/Realtime-Dual-Fetch-Hybrid-LLM-Trust-Scorer.git
-cd Realtime-Dual-Fetch-Hybrid-LLM-Trust-Scorer/Final_AI_Server
-
-# 2. Install Python dependencies
-pip install -r requirements.txt
-
-# 3. Configure API keys
-cp ../.env.example .env
-# Edit .env and fill in your GEMINI_API_KEY and FIRECRAWL_API_KEY
-
-# 4. Pull the local LLM model (one-time, ~2.5 GB)
-ollama pull gemma3:4b
-
-# 5. Start the server
-python main.py
-```
-
-The server starts on `http://localhost:8000`. Interactive API docs available at `http://localhost:8000/docs`.
-
----
-
-## 📡 API Reference
-
-### `POST /api/analyze` — Real-Time Trust Evaluation
+### `POST /api/analyze` — real-time trust evaluation
 
 ```bash
 curl -X POST http://localhost:8000/api/analyze \
@@ -155,16 +93,12 @@ curl -X POST http://localhost:8000/api/analyze \
      -d '{"url": "https://example-store.com"}'
 ```
 
-**Response:**
 ```json
 {
   "status": "success",
-  "url": "https://example-store.com",
-  "domain_info": "Domain: example-store.com | Registered: 2019-04-12",
   "extracted_data": {
     "regex_matches": {
       "phone": ["+966512345678"],
-      "email": ["INFO@EXAMPLE-STORE.COM"],
       "vat_number": ["310122345600003"],
       "commercial_reg": ["1010123456"]
     },
@@ -176,18 +110,18 @@ curl -X POST http://localhost:8000/api/analyze \
   "trust_evaluation": {
     "total_score": 100,
     "tier": "Trusted & Secure",
-    "color_code": "Green",
     "breakdown": {
       "legal_identity": 40, "domain_longevity": 25,
       "contactability": 15, "transparency": 20, "penalties": 0
     },
-    "warnings": [],
-    "domain_age_years": 6.1
+    "warnings": []
   }
 }
 ```
 
-### `POST /api/chat` — Arabic Consumer Safety Advisor
+### `POST /api/chat` — Arabic consumer-safety advisor
+
+Session-aware chatbot on **local Ollama (`gemma3:4b`)** — each session keeps independent history through a **sliding-window memory manager** that prevents context overflow while preserving relevant turns.
 
 ```bash
 curl -X POST http://localhost:8000/api/chat \
@@ -195,78 +129,71 @@ curl -X POST http://localhost:8000/api/chat \
      -d '{"session_id": "user_123", "message": "ما هو السجل التجاري؟"}'
 ```
 
-**Response:**
-```json
-{ "reply": "السجل التجاري هو وثيقة رسمية تصدرها وزارة التجارة..." }
-```
+---
+
+## Engineering Details
+
+- **Dual-fetch design:** each candidate page is fetched twice on purpose — raw HTML (feeds regex; captures hidden React/Next.js JSON state that Markdown renderers drop) and Firecrawl Markdown (feeds Gemini; strips nav/ads/boilerplate). Each consumer gets the representation it works best on.
+- **Operational hygiene:** structured file + console logging (`logger_config.py`), CSV request logging, CORS configuration, `.env`-templated secrets, Pydantic request/response validation.
+- **Live integration tests:** `tests/test_client.py` exercises both endpoints — chatbot session-memory behavior plus full live analyses of real stores.
 
 ---
 
-## 🧪 Running the Test Client
+## Quick Start
 
-A functional test client is included that exercises both endpoints:
+| Requirement | Notes |
+|---|---|
+| Python 3.10+ | — |
+| Ollama | must be running locally (`ollama pull gemma3:4b`, ~2.5 GB) |
+| Gemini API key | free tier at [aistudio.google.com](https://aistudio.google.com/app/apikey) |
+| Firecrawl API key | free tier at [firecrawl.dev](https://www.firecrawl.dev/app/api-keys) |
 
 ```bash
-cd Final_AI_Server
-python tests/test_client.py
+git clone https://github.com/YazanAi-Dev3/Realtime-Dual-Fetch-Hybrid-LLM-Trust-Scorer.git
+cd Realtime-Dual-Fetch-Hybrid-LLM-Trust-Scorer/Final_AI_Server
+
+pip install -r requirements.txt
+cp ../.env.example .env    # fill GEMINI_API_KEY and FIRECRAWL_API_KEY
+ollama pull gemma3:4b
+python main.py
 ```
 
-This tests chatbot session memory (sliding-window) and runs live analysis on two real stores.
+Interactive API docs at `http://localhost:8000/docs`.
 
 ---
 
-## 🗂️ Project Structure
+## Project Structure
 
 ```
 Realtime-Dual-Fetch-Hybrid-LLM-Trust-Scorer/
-├── .env.example                    ← API key template (copy → .env)
-├── .gitignore
-├── README.md
-│
+├── .env.example
 └── Final_AI_Server/
-    ├── main.py                     ← FastAPI app, CORS, CSV logging, endpoints
-    ├── config.py                   ← Env var loader (dotenv)
-    ├── logger_config.py            ← Structured logging (file + console)
-    ├── requirements.txt            ← All dependencies
-    ├── ANALYZER_SCENARIOS_AR.md    ← Full scoring logic (Arabic, all 192 scenarios)
+    ├── main.py                     # FastAPI app: CORS, CSV logging, endpoints
+    ├── config.py                   # dotenv-driven configuration
+    ├── logger_config.py            # structured file + console logging
+    ├── ANALYZER_SCENARIOS_AR.md    # full scoring logic — all 192 scenarios (Arabic)
     ├── core/
-    │   ├── analyzer_engine.py      ← THE PIPELINE: scrape → extract → score
-    │   └── chatbot_engine.py       ← ChatbotManager + sliding-window memory
+    │   ├── analyzer_engine.py      # THE pipeline: scrape → extract → score
+    │   └── chatbot_engine.py       # ChatbotManager + sliding-window memory
     └── tests/
-        └── test_client.py          ← Live integration test client
+        └── test_client.py          # live integration test client
 ```
 
 ---
 
-## 🛠️ Tech Stack
+## Tech Stack
 
 | Layer | Technology | Role |
 |---|---|---|
-| **API Server** | FastAPI + Uvicorn | Production ASGI server, CORS, request validation |
-| **Scraping** | `requests` + Firecrawl | Dual-fetch: raw HTML & clean Markdown |
-| **LLM Inference** | Google Gemini `flash-lite` | Semantic policy extraction |
-| **Local LLM** | Ollama `gemma3:4b` | Privacy-preserving Arabic chatbot |
-| **OSINT** | `python-whois` + `tldextract` | Domain age verification |
-| **HTML Parsing** | BeautifulSoup4 | Hidden script tag extraction |
-| **Data Models** | Pydantic | Request/response validation |
-| **Logging** | Python `logging` | Structured file + console output |
+| API | FastAPI + Uvicorn + Pydantic | ASGI server, validation, CORS |
+| Scraping | requests + Firecrawl + BeautifulSoup4 | dual-fetch raw HTML & clean Markdown |
+| LLM (cloud) | Google Gemini flash-lite | semantic policy extraction |
+| LLM (local) | Ollama gemma3:4b | privacy-preserving Arabic chatbot |
+| OSINT | python-whois + tldextract | domain age verification |
+| Logging | Python logging + CSV audit | traceability |
 
 ---
 
-## ⚠️ External Services Required
+## License
 
-This project calls three external services. You must provision credentials before running:
-
-| Service | Purpose | How to Get |
-|---|---|---|
-| **Google Gemini API** | Semantic LLM extraction in the analyzer pipeline | [aistudio.google.com](https://aistudio.google.com/app/apikey) — free tier available |
-| **Firecrawl API** | Clean Markdown scraping of store pages | [firecrawl.dev](https://www.firecrawl.dev/app/api-keys) — free tier available |
-| **Ollama (local)** | Runs the Arabic chatbot LLM locally on your machine | [ollama.com](https://ollama.com) — free, no API key needed |
-
-Place all credentials in `Final_AI_Server/.env` (copy from `.env.example`).
-
----
-
-## 📄 License
-
-MIT License — see [LICENSE](LICENSE) for details.
+MIT — see [LICENSE](LICENSE).
